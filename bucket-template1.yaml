@@ -1,0 +1,14 @@
+Resources:
+  # Local Resource
+  ParentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: "my-parent-owned-bucket-unique-123"
+
+  # Nested Stack Resource
+  MyNestedStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/your-storage-bucket/bucket-template2.yaml
+      Parameters:
+        NestedBucketName: !Sub "ciaran-grant-child-bucket-${AWS::AccountId}"
