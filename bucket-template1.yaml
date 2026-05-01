@@ -9,6 +9,6 @@ Resources:
   MyNestedStack:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: https://s3.amazonaws.com/your-storage-bucket/bucket-template2.yaml
+      TemplateURL: https://ciarang-bucket-0909042025.s3.eu-west-2.amazonaws.com/bucket-template2.yaml
       Parameters:
-        NestedBucketName: !Sub "ciaran-grant-child-bucket-${AWS::AccountId}"
+        NestedBucketName: !Sub "ciaran-grant-nested-bucket-${AWS::AccountId}"
