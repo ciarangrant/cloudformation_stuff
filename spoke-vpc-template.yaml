@@ -1,0 +1,975 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: >
+  devplatform-deploy spoke-vpc template version: v2.0.1
+  VPC and networking resources template (including Transit Gateway and IPAM integration) managed by dev-platform.
+
+Transform:
+  - AWS::Serverless-2016-10-31
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "General Configuration"
+        Parameters:
+          - VpcLinkEnabled
+          - VpcSize
+          - IpamPool
+      - Label:
+          default: "Egress Control"
+        Parameters:
+          - TransitGatewayId
+          - AllowedDomains
+          - TestEgress
+          - TestCustomUrls
+      - Label:
+          default: "Disaster Recovery Settings"
+        Parameters:
+          - DisasterRecoveryTransitGatewayId
+          - UseDisasterRecovery
+      - Label:
+          default: "Enabled AWS APIs"
+        Parameters:
+          - AppConfigApiEnabled
+          - AppConfigDataApiEnabled
+          - AthenaApiEnabled
+          - BatchApiEnabled
+          - CloudFormationEndpointEnabled
+          - CloudTrailApiEnabled
+          - CloudWatchApiEnabled
+          - CloudWatchLogsApiEnabled
+          - CodeBuildApiEnabled
+          - CodeDeployApiEnabled
+          - DynamoDBApiEnabled
+          - DynatraceApiEnabled
+          - ECRApiEnabled
+          - EventsApiEnabled
+          - ExecuteApiGatewayEnabled
+          - FirehoseApiEnabled
+          - GlueApiEnabled
+          - IdentityStoreApiEnabled
+          - KinesisApiEnabled
+          - KMSApiEnabled
+          - LambdaApiEnabled
+          - S3ApiEnabled
+          - SecretsManagerApiEnabled
+          - SESSmtpEnabled
+          - SNSApiEnabled
+          - SQSApiEnabled
+          - SSMApiEnabled
+          - SSMParametersStoreEnabled
+          - StatesApiEnabled
+          - STSApiEnabled
+          - TextractApiEnabled
+          - XRayApiEnabled
+      - Label:
+          default: "Rest API Gateway VPC Link"
+        Parameters:
+          - RestAPIGWVpcLinkEnabled
+          - AccessLogsCustomBucketNameEnabled
+      - Label:
+          default: "NLB Cross Zone support"
+        Parameters:
+          - NlbCrossZoneEnabled
+
+###################################
+#   Parameters
+###################################
+Parameters:
+  VpcLinkEnabled:
+    Description: >
+      Allow a public API gateway to connect to services that are deployed
+      in the VPC. This is not required if the API Gateway only connects to
+      Lambda functions.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+
+  IpamPool:
+    Type: String
+    Description: Select the pool of IP addresses you want an allocation from for this VPC. This is managed in our IPAM.
+    AllowedValues:
+      - Development
+      - Build
+      - Staging
+      - Integration
+      - Production
+    Default: Development
+
+
+  VpcSize:
+    Type: String
+    Description: "Select the netmask length of the VPC being deployed. VPC Size - Medium: /20 (4,096 IPs), or Large: /19 (8,192 IPs)"
+    AllowedValues:
+      - "Medium"
+      - "Large"
+    Default: "Large"
+
+  TransitGatewayId:
+    Description: >
+      The ID of the Transit Gateway for this VPC's service environment.
+      You can get the correct value from: https://govukverify.atlassian.net/wiki/spaces/PLAT/pages/5746426210/Transit+Gateway+Infrastructure+Reference
+    Type: "String"
+    AllowedPattern: ".+"
+
+  AllowedDomains:
+    Description: >
+      Allow these domains to be resolved by DNS. If no AllowedDomains are needed,
+      input none. Please note: to enable egress, you must fill the AllowedDomains.
+    Type: "CommaDelimitedList"
+    Default: "none"
+    AllowedPattern: ".+"
+
+  TestEgress:
+    Description: >
+      Deploy a lambda you can use to confirm egress via the Transit Gateway.
+      The lambda will test a set of default URLs, and you can specify custom URLs via the TestCustomUrls parameter.
+    Type: "String"
+    Default: "Yes"
+    AllowedValues:
+      - "Yes"
+      - "No"
+
+  TestCustomUrls:
+    Description: >
+      Specify any custom URLs the egress-test lambda will validate.
+      These will be stored as a comma-delimited list under the lambda's CUSTOM_URLS environment variable.
+      Include the protocol (e.g. https://)
+    Type: "String"
+    Default: ""
+
+  DisasterRecoveryTransitGatewayId:
+    Description: >
+      The ID of the Disaster Recovery Transit Gateway for this VPC's service environment.
+      This will usually be set to `None` outside of production and disaster recovery actions.
+      You can get this value from: https://govukverify.atlassian.net/wiki/spaces/PLAT/pages/5746426210/Transit+Gateway+Infrastructure+Reference
+    Type: "String"
+    Default: "None"
+
+  UseDisasterRecovery:
+    Description: >
+      Set to `Yes` to make this VPC send egress traffic via the Disaster Recovery Transit Gateway.
+      This will always be set to `No` outside of disaster recovery actions.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+
+  AccessLogsCustomBucketNameEnabled:
+    Description: >
+      Controls the AccessLogsBucket BucketName.
+      By default (Yes) the AccessLogsBucket is named as {AWS::StackName}-{Pseudo random element from stack id}. This allows the bucket name to be found programatically and avoids naming collisions within the account.
+      When set to No the bucket will be named by Cloudformation standard resource naming approach. Please seek guidance from #dev-platform before setting 'No'
+    Type: "String"
+    Default: "Yes"
+    AllowedValues:
+      - "Yes"
+      - "No"
+
+  NlbCrossZoneEnabled:
+    Description: >
+      This enables NLB Cross-zone load balancing, which can be used to route
+      traffic accross the Availability Zones. Default is Yes (enabled)
+    Type: "String"
+    Default: "Yes"
+    AllowedValues:
+      - "Yes"
+      - "No"
+
+  AppConfigApiEnabled:
+    Description: >
+      The App Config API is enabled. This is only required in stacks where the
+      application uses App Config.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  AppConfigDataApiEnabled:
+    Description: >
+      The App Config Data API is enabled. This is only required in stacks where the
+      application uses App Config Data.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  AthenaApiEnabled:
+    Description: >
+      The Athena API is enabled. This is only required in stacks where the
+      application uses Athena as a data engine.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  BatchApiEnabled:
+    Description: >
+      The AWS Batch API is enabled. Only enable if you require access to the
+      fully managed batch computing service.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  CloudFormationEndpointEnabled:
+    Description: >
+      This provisions a cloudformation VPC Endpoint, which may be needed when either
+      using custom resources or wait conditions.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  CloudTrailApiEnabled:
+    Description: >
+      The Cloud Trail API is enabled. This is required for lambdas that will
+      make Cloud Trail queries, retrieve results and interact with other
+      features of the service.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  CloudWatchApiEnabled:
+    Description: >
+      The CloudWatch Metrics API is enabled. This is only required in stacks
+      where applications explicitly emit metrics using the PutMetricData API
+      call (rather than using the logs embedded metric format) or perform a
+      Canary-style release by setting a DeploymentPreference on a Lambda.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  CloudWatchLogsApiEnabled:
+    Description: >
+      The CloudWatch Logs API is enabled. This is only required in stacks
+      where applications explicitly emit or query Cloudwatch logs.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  CodeBuildApiEnabled:
+    Description: >
+      The CodeBuild API is enabled.  This is only required for stacks who
+      use CodeBuild within their VPC and know it's required for executing
+      certain API calls.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  CodeDeployApiEnabled:
+    Description: >
+      The Code Deploy API is enabled. This is only required in stacks that perform a
+      Canary-style release by setting a DeploymentPreference on a Lambda. It
+      allows the Lambda runtime to update the hook execution status in the associated
+      Deployment Group.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  DynamoDBApiEnabled:
+    Description: >
+      The DynamoDB API is enabled. This is only required in stacks where the
+      application uses DynamoDB as a data store.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  DynatraceApiEnabled:
+    Description: >
+      The Dynatrace API is enabled. This is only required in stacks
+      where applications explicitly emit or query Dynatrace.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  EventsApiEnabled:
+    Description: >
+      The Events API is enabled. This is only required in stacks where the
+      application processes event bridge events.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  ECRApiEnabled:
+    Description: >
+      The Elastic Container Registry (ECR) API is enabled. This is only required in
+      stacks that deploy containers to Fargate.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  ExecuteApiGatewayEnabled:
+    Description: >
+      The Execute API is enabled. This is only required in stacks that use private REST APIs,
+      with private dns enabled. More information available at
+      'https://docs.aws.amazon.com/apigateway/latest/developerguide/apigateway-private-apis.html'
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  FirehoseApiEnabled:
+    Description: >
+      The Kinesis Firehose API is enabled. This is only required in stacks where the
+      application directly writes records to a Kinesis Firehose. It is not required
+      if there is a separate process that runs outside the VPC that streams data to
+      the Firehose.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  GlueApiEnabled:
+    Description: >
+      The Glue API is enabled. Only enable if you require access to the
+      Glue serverless data integration service.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  IdentityStoreApiEnabled:
+    Description: >
+      The Identity Store API service is enabled.
+      This is endpoint required specifically for the T.E.A.M application:
+      'https://govukverify.atlassian.net/wiki/x/Xo_T5'
+      IMPORTANT: it is not recommended that you enable this unless deploying
+      for use with T.E.A.M
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  KinesisApiEnabled:
+    Description: >
+      The Kinesis API is enabled. This is only required in stacks where the
+      application uses Kinesis streams.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  KMSApiEnabled:
+    Description: >
+      The AWS Key Management Service (KMS) is enabled. This should be enabled
+      in most stacks as most event sources and targets should be using KMS to
+      encrypt data at rest.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  LambdaApiEnabled:
+    Description: >
+      The Lambda API is enabled. This is only required in stacks that either
+      directly invoke a Lambda using the AWS API or perform a
+      Canary-style release by setting a DeploymentPreference on a Lambda. It
+      allows the Lambda runtime to invoke the associate hook functions.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  RestAPIGWVpcLinkEnabled:
+    Description: >
+      This provisions resources required to create a WAF in the Fargate stacks.
+      To be compatible with WAF you need a Network Load Balancer, and a REST API gateway.
+      They rely on having a VPC link to the Application Load Balancer.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  S3ApiEnabled:
+    Description: >
+      The S3 API is enabled. This is only required in stacks where the
+      application uses S3 as a data store.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  SecretsManagerApiEnabled:
+    Description: >
+      The AWS SecretsManager API is enabled. This is only required in stacks
+      that read secret values from secrets manager.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  SESSmtpEnabled:
+    Description: >
+      This provisions a Simple Email Service (SES) Endpoint, which can be used to send e-mail
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  SNSApiEnabled:
+    Description: >
+      The SNS API is enabled. This is only required in stacks where the
+      application uses SNS topics.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  SQSApiEnabled:
+    Description: >
+      The SQS API is enabled. This is only required in stacks where the
+      application uses SQS queues.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  STSApiEnabled:
+    Description: >
+      This provisions a Security Token Service (STS) Endpoint, which can be used to request
+      temporary credentials
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  SSMApiEnabled:
+    Description: >
+      The AWS SSM API is enabled. This is required for applications to read
+      values from the SSM parameter store.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  SSMParametersStoreEnabled:
+    Description: >
+      Store VPC Id, Subnet Id's and the Vpc Link Id into SSM Parameter store to
+      be accessed where import function is not supported. This is required by
+      templates using blue/green hook deployments.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  StatesApiEnabled:
+    Description: >
+      The States API is enabled. This is only required in stacks which make
+      use of Step Functions.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  TextractApiEnabled:
+    Description: >
+      The Textract API is enabled. This is only required in stacks that use the Amazon
+      Textract service.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+  XRayApiEnabled:
+    Description: >
+      The AWS X-Ray API is enabled. This is not required for a Lambda to emit
+      Trace events via the X-Ray daemon (e.g. by using Lambda Powertools). It
+      is only required is the Lambda makes explicit calls to the X-Ray API or
+      for containers to emit Trace events.
+    Type: "String"
+    Default: "No"
+    AllowedValues:
+      - "Yes"
+      - "No"
+
+###################################
+#   Conditions
+###################################
+
+Conditions:
+  AccessLogsCustomBucketName:
+    Fn::Equals:
+      - !Ref AccessLogsCustomBucketNameEnabled
+      - "Yes"
+
+  ProvisionOutboundInternet:
+    Fn::Not:
+      - Fn::Equals:
+          - !Join ['', !Ref AllowedDomains]
+          - "none"
+
+  ProvisionAllowedDomainsList:
+    Fn::Not:
+      - Fn::Equals:
+          - !Join ['', !Ref AllowedDomains]
+          - "none"
+
+  ProvisionEgressTest:
+    Fn::Equals:
+      - !Ref TestEgress
+      - "Yes"
+
+  ProvisionVpcLink:
+    Fn::Equals:
+      - !Ref VpcLinkEnabled
+      - "Yes"
+
+  ProvisionRestAPIGWVpcLink:
+    Fn::Equals:
+      - !Ref RestAPIGWVpcLinkEnabled
+      - "Yes"
+
+  ProvisionAppConfigVPCEndpoint:
+    Fn::Equals:
+      - !Ref AppConfigApiEnabled
+      - "Yes"
+
+  ProvisionAppConfigDataVPCEndpoint:
+    Fn::Equals:
+      - !Ref AppConfigDataApiEnabled
+      - "Yes"
+
+  ProvisionIdentityStoreVPCEndpoint:
+    Fn::Equals:
+      - !Ref IdentityStoreApiEnabled
+      - "Yes"
+
+  ProvisionCloudTrailVPCEndpoint:
+    Fn::Equals:
+      - !Ref CloudTrailApiEnabled
+      - "Yes"
+
+  ProvisionCloudFormationEndpoint:
+    Fn::Equals:
+      - !Ref CloudFormationEndpointEnabled
+      - "Yes"
+
+  ProvisionBatchVPCEndpoint:
+    Fn::Equals:
+      - !Ref BatchApiEnabled
+      - "Yes"
+
+  ProvisionGlueVPCEndpoint:
+    Fn::Equals:
+      - !Ref GlueApiEnabled
+      - "Yes"
+
+  ProvisionCodeBuildVPCEndpoint:
+    Fn::Equals:
+      - !Ref CodeBuildApiEnabled
+      - "Yes"
+
+  ProvisionCloudWatchVPCEndpoint:
+    Fn::Equals:
+      - !Ref CloudWatchApiEnabled
+      - "Yes"
+
+  ProvisionCloudWatchLogsVPCEndpoint:
+    Fn::Equals:
+      - !Ref CloudWatchLogsApiEnabled
+      - "Yes"
+
+  ProvisionDynatraceVPCEndpoint:
+    Fn::Equals:
+      - !Ref DynatraceApiEnabled
+      - "Yes"
+
+  ProvisionXRayVPCEndpoint:
+    Fn::Equals:
+      - !Ref XRayApiEnabled
+      - "Yes"
+
+  ProvisionSSMVPCEndpoint:
+    Fn::Equals:
+      - !Ref SSMApiEnabled
+      - "Yes"
+
+  ProvisionSecretsManagerVPCEndpoint:
+    Fn::Equals:
+      - !Ref SecretsManagerApiEnabled
+      - "Yes"
+
+  ProvisionKMSVPCEndpoint:
+    Fn::Equals:
+      - !Ref KMSApiEnabled
+      - "Yes"
+
+  ProvisionDynamoDBVPCEndpoint:
+    Fn::Equals:
+      - !Ref DynamoDBApiEnabled
+      - "Yes"
+
+  ProvisionAthenaVPCEndpoint:
+    Fn::Equals:
+      - !Ref AthenaApiEnabled
+      - "Yes"
+
+  ProvisionS3VPCEndpoint:
+    Fn::Or:
+      - Fn::Equals:
+          - !Ref S3ApiEnabled
+          - "Yes"
+      - Fn::Equals:
+          - !Ref ECRApiEnabled
+          - "Yes"
+      - Fn::Equals:
+          - !Ref CloudFormationEndpointEnabled
+          - "Yes"
+
+  ProvisionSQSVPCEndpoint:
+    Fn::Equals:
+      - !Ref SQSApiEnabled
+      - "Yes"
+
+  ProvisionSNSVPCEndpoint:
+    Fn::Equals:
+      - !Ref SNSApiEnabled
+      - "Yes"
+
+  ProvisionKinesisVPCEndpoint:
+    Fn::Equals:
+      - !Ref KinesisApiEnabled
+      - "Yes"
+
+  ProvisionFirehoseVPCEndpoint:
+    Fn::Equals:
+      - !Ref FirehoseApiEnabled
+      - "Yes"
+
+  ProvisionEventsVPCEndpoint:
+    Fn::Equals:
+      - !Ref EventsApiEnabled
+      - "Yes"
+
+  ProvisionStatesVPCEndpoint:
+    Fn::Equals:
+      - !Ref StatesApiEnabled
+      - "Yes"
+
+  ProvisionECRVPCEndpoint:
+    Fn::Equals:
+      - !Ref ECRApiEnabled
+      - "Yes"
+
+  ProvisionLambdaVPCEndpoint:
+    Fn::Equals:
+      - !Ref LambdaApiEnabled
+      - "Yes"
+
+  ProvisionCodeDeployVPCEndpoint:
+    Fn::Equals:
+      - !Ref CodeDeployApiEnabled
+      - "Yes"
+
+  ProvisionExecuteApiGatewayVPCEndpoint:
+    Fn::Equals:
+      - !Ref ExecuteApiGatewayEnabled
+      - "Yes"
+
+  ProvisionTextractVPCEndpoint:
+    Fn::Equals:
+      - !Ref TextractApiEnabled
+      - "Yes"
+
+  ProvisionSESSmtpVPCEndpoint:
+    Fn::Equals:
+      - !Ref SESSmtpEnabled
+      - "Yes"
+
+  ProvisionSTSVPCEndpoint:
+    Fn::Equals:
+      - !Ref STSApiEnabled
+      - "Yes"
+
+  SSMParametersStoreEnabled:
+    Fn::Equals:
+      - !Ref SSMParametersStoreEnabled
+      - "Yes"
+
+  SSMParametersStoreCreateVpcLink:
+    Fn::And:
+      - Condition: ProvisionVpcLink
+      - Condition: SSMParametersStoreEnabled
+
+  SSMParametersStoreCreateApiGatewayVpcLinkId:
+    Fn::And:
+      - Condition: ProvisionRestAPIGWVpcLink
+      - Condition: SSMParametersStoreEnabled
+
+  SSMParametersStoreCreateExecuteApiGatewayVpcEndpointId:
+    Fn::And:
+      - Condition: ProvisionExecuteApiGatewayVPCEndpoint
+      - Condition: SSMParametersStoreEnabled
+
+  ProvisionNlbCrossZone:
+    Fn::Equals:
+      - !Ref NlbCrossZoneEnabled
+      - "Yes"
+
+  ProvisionDisasterRecoveryTransitGatewayAttachment:
+    Fn::And:
+      - Condition: ProvisionOutboundInternet
+      - Fn::Not:
+         - Fn::Equals:
+           - !Ref DisasterRecoveryTransitGatewayId
+           - "None"
+
+  UseDisasterRecoveryTransitGateway:
+    Fn::And:
+      - Condition: ProvisionDisasterRecoveryTransitGatewayAttachment
+      - Fn::Equals:
+        - !Ref UseDisasterRecovery
+        - "Yes"
+
+###################################
+#   Mappings
+###################################
+
+Mappings:
+  SubnetZoneIds:
+    eu-west-2:
+      "a": "euw2-az1"
+      "b": "euw2-az2"
+      "c": "euw2-az3"
+
+  VpcSize:
+    Medium:
+      VpcCidr: 20
+      SubnetPublicCidr: 8
+      SubnetTgwCidr: 6
+      SubnetPrivateCidr: 8
+      SubnetProtectedCidr: 8
+    Large:
+      VpcCidr: 19
+      SubnetPublicCidr: 9
+      SubnetTgwCidr: 6
+      SubnetPrivateCidr: 9
+      SubnetProtectedCidr: 9
+
+  # see https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html
+  ElasticLoadBalancerAccountIds:
+    eu-west-2:
+      AccountId: 652711504416
+
+###################################
+#   Outputs
+###################################
+
+Outputs:
+
+  RoleArn:
+    Condition: ProvisionOutboundInternet
+    Description: "The ARN of the cross-account role in the spoke account."
+    Value: !Sub "arn:aws:iam::${AWS::AccountId}:role/CrossAccountTgwRole"
+
+  VpcId:
+    Description: The ID of the VPC.
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcId"
+
+  VpcCidr:
+    Description: VPC Cidr Range
+    Value: !GetAtt Vpc.CidrBlock
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcCidr"
+
+  TransitGatewayId:
+    Condition: ProvisionOutboundInternet
+    Description: The TGW ID for the selected environment
+    Value: !Ref TransitGatewayId
+
+  AWSServicesEndpointSecurityGroupId:
+    Description: The ID of the security group attached to the AWS services VPC endpoints.
+    Value: !GetAtt AwsServicesEndpointSecurityGroup.GroupId
+    Export:
+      Name: !Sub "${AWS::StackName}-AWSServicesEndpointSecurityGroupId"
+
+  PrivateSubnetIdA:
+    Description: The ID of the private subnet for Availability Zone A.
+    Value: !Ref PrivateSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetIdA"
+
+  PrivateSubnetIdB:
+    Description: The ID of the private subnet for Availability Zone B.
+    Value: !Ref PrivateSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetIdB"
+
+  PrivateSubnetIdC:
+    Description: The ID of the private subnet for Availability Zone C.
+    Value: !Ref PrivateSubnetC
+    Export:
+      Name: !Sub "${AWS::StackName}-PrivateSubnetIdC"
+
+  ProtectedSubnetIdA:
+    Description: The ID of the protected subnet for Availability Zone A.
+    Value: !Ref ProtectedSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-ProtectedSubnetIdA"
+
+  ProtectedSubnetIdB:
+    Description: The ID of the protected subnet for Availability Zone B.
+    Value: !Ref ProtectedSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-ProtectedSubnetIdB"
+
+  ProtectedSubnetIdC:
+    Description: The ID of the protected subnet for Availability Zone C.
+    Value: !Ref ProtectedSubnetC
+    Export:
+      Name: !Sub "${AWS::StackName}-ProtectedSubnetIdC"
+
+  TgwSubnetIdA:
+    Condition: ProvisionOutboundInternet
+    Description: The ID of the Tgw subnet for Availability Zone A.
+    Value: !Ref TgwSubnetA
+    Export:
+      Name: !Sub "${AWS::StackName}-TgwSubnetIdA"
+
+  TgwSubnetIdB:
+    Condition: ProvisionOutboundInternet
+    Description: The ID of the Tgw subnet for Availability Zone B.
+    Value: !Ref TgwSubnetB
+    Export:
+      Name: !Sub "${AWS::StackName}-TgwSubnetIdB"
+
+  TgwSubnetIdC:
+    Condition: ProvisionOutboundInternet
+    Description: The ID of the Tgw subnet for Availability Zone C.
+    Value: !Ref TgwSubnetC
+    Export:
+      Name: !Sub "${AWS::StackName}-TgwSubnetIdC"
+
+  TgwSubnetACidr:
+    Condition: ProvisionOutboundInternet
+    Description: The CIDR range of the Tgw  subnet for Availability Zone A.
+    Value: !GetAtt TgwSubnetA.CidrBlock
+    Export:
+      Name: !Sub "${AWS::StackName}-TgwSubnetACidr"
+
+  TgwSubnetBCidr:
+    Condition: ProvisionOutboundInternet
+    Description: The CIDR range of the Tgw  subnet for Availability Zone B.
+    Value: !GetAtt TgwSubnetB.CidrBlock
+    Export:
+      Name: !Sub "${AWS::StackName}-TgwSubnetBCidr"
+
+  TgwSubnetCCidr:
+    Condition: ProvisionOutboundInternet
+    Description: The CIDR range of the Tgw  subnet for Availability Zone C.
+    Value: !GetAtt TgwSubnetC.CidrBlock
+    Export:
+      Name: !Sub "${AWS::StackName}-TgwSubnetCCidr"
+
+  ApiGatewayVpcLinkId:
+    Condition: ProvisionRestAPIGWVpcLink
+    Description: WAF component - The ID of the VPC link only to be used with REST APIs
+    Value: !Ref ApiGatewayVpcLink
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiGatewayVpcLinkId"
+
+  ApiGatewayVpcLinkTargetNLB:
+    Condition: ProvisionRestAPIGWVpcLink
+    Description: WAF component - The URN of the Network Load Balancer targeted by the VPC link (REST API)
+    Value: !Ref NetworkLoadBalancer
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiGatewayVpcLinkTargetNLB"
+
+  ApiGatewayVpcLinkTargetNLBDNS:
+    Condition: ProvisionRestAPIGWVpcLink
+    Description: WAF component - The DNS name of Network Load Balancer targeted by the VPC link (REST API)
+    Value: !GetAtt NetworkLoadBalancer.DNSName
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiGatewayVpcLinkTargetNLBDNS"
+
+  VpcLinkId:
+    Condition: ProvisionVpcLink
+    Description: The ID of the VPC link that connects to the private subnets.
+    Value: !Ref VpcLink
+    Export:
+      Name: !Sub "${AWS::StackName}-VpcLinkId"
+
+  ExecuteApiGatewayVpcEndpointId:
+    Condition: ProvisionExecuteApiGatewayVPCEndpoint
+    Description: The id of the VPC Endpoint interface for API Gateway.
+    Value: !Ref ExecuteApiGatewayEndpoint
+    Export:
+      Name: !Sub "${AWS::StackName}-ExecuteApiGatewayEndpointId"
+
+  FlowLogLogGroup:
+    Description: The Name of the CloudWatch Log Group for VPC Flow Logs.
+    Value: !Ref FlowLogLogGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-FlowLogLogGroup"
+
+  TgwRouteTableA:
+    Condition: ProvisionOutboundInternet
+    Description: The ID of Tgw subnet Route Table A.
+    Value: !Ref TgwRouteTableA
+    Export:
+      Name: !Sub "${AWS::StackName}-TgwRouteTableA"
+
+  TgwRouteTableB:
+    Condition: ProvisionOutboundInternet
+    Description: The ID of Tgw subnet Route Table B.
+    Value: !Ref TgwRouteTableB
+    Export:
+      Name: !Sub "${AWS::StackName}-TgwRouteTableB"
+
+  TgwRouteTableC:
+    Condition: ProvisionOutboundInternet
+    Description: The ID of Tgw subnet Route Table C.
+    Value: !Ref TgwRouteTableC
+    Export:
+      Name: !Sub "${AWS::StackName}-TgwRouteTableC"
+
+###################################
+#   Resources
+###################################
+
+Resources:
+  # KMS key for logging
+  LoggingKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              AWS: !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:root"
+            Action:
+              - "kms:*"
+            Resource:
+              - "*"
+          - Effect: "Allow"
+            Principal:
+              Service: !Sub "logs.${AWS::Region}.amazonaws.com"
+            Action:
+              - "kms:Encrypt*"
+              - "kms:Decrypt*"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:Describe*"
+            Resource:
+              - "*"
+            Condition:
+              ArnLike:
+                "kms:EncryptionContext:aws:logs:arn": !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
